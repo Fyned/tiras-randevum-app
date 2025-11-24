@@ -10,54 +10,28 @@ export const AuthProvider = ({ children }) => {
   const [isAdmin, setIsAdmin] = useState(false);
 
   useEffect(() => {
+    // Oturum kontrolü
     const getInitialSession = async () => {
       const { data: { session } } = await supabase.auth.getSession();
-      
       if (session?.user) {
-        setUser(session.user);
-        const { data: userProfile, error } = await supabase
-          .from('user_profiles')
-          .select('*')
-          .eq('id', session.user.id)
-          .single();
-
-        if (error) {
-          console.error('Error fetching user profile:', error);
-        } else {
-          setProfile(userProfile);
-          setIsAdmin(userProfile?.role === 'admin');
-        }
+        await fetchProfile(session.user);
+      } else {
+        setLoading(false);
       }
-      setLoading(false);
     };
 
     getInitialSession();
 
+    // Auth durum değişikliğini dinle
     const { data: authListener } = supabase.auth.onAuthStateChange(async (event, session) => {
-      setLoading(true);
-      const currentUser = session?.user;
-      setUser(currentUser ?? null);
-
-      if (currentUser) {
-        const { data: userProfile, error } = await supabase
-          .from('user_profiles')
-          .select('*')
-          .eq('id', currentUser.id)
-          .single();
-        
-        if (error) {
-          console.error('Error fetching profile on auth change:', error);
-          setProfile(null);
-          setIsAdmin(false);
-        } else {
-          setProfile(userProfile);
-          setIsAdmin(userProfile?.role === 'admin');
-        }
+      if (session?.user) {
+        await fetchProfile(session.user);
       } else {
+        setUser(null);
         setProfile(null);
         setIsAdmin(false);
+        setLoading(false);
       }
-      setLoading(false);
     });
 
     return () => {
@@ -65,12 +39,81 @@ export const AuthProvider = ({ children }) => {
     };
   }, []);
 
+  // Profil verisini çeken yardımcı fonksiyon
+  const fetchProfile = async (currentUser) => {
+    try {
+      const { data: userProfile, error } = await supabase
+        .from('user_profiles')
+        .select('*')
+        .eq('id', currentUser.id)
+        .single();
+
+      if (error) {
+        console.warn('Profil bulunamadı, SQL tetikleyicilerini kontrol edin.', error);
+      } else {
+        setProfile(userProfile);
+        setIsAdmin(userProfile?.role === 'admin');
+      }
+      setUser(currentUser);
+    } catch (error) {
+      console.error("Profil yükleme hatası:", error);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // EKSİK OLAN LOGIN FONKSİYONU
+  const login = async (email, password) => {
+    const { data, error } = await supabase.auth.signInWithPassword({
+      email,
+      password,
+    });
+
+    if (error) throw error;
+    
+    // Giriş başarılıysa profili manuel çekip döndürelim (Login sayfası için)
+    if (data.user) {
+        const { data: userProfile } = await supabase
+        .from('user_profiles')
+        .select('*')
+        .eq('id', data.user.id)
+        .single();
+        
+        return { user: data.user, profile: userProfile };
+    }
+    return data;
+  };
+
+  // EKSİK OLAN SIGNUP (KAYIT) FONKSİYONU
+  const signup = async (email, password, metaData) => {
+    const { data, error } = await supabase.auth.signUp({
+      email,
+      password,
+      options: {
+        data: metaData, // Ad soyad vb. buraya gider
+      },
+    });
+    if (error) throw error;
+    return data;
+  };
+
+  const signOut = async () => {
+    await supabase.auth.signOut();
+    setUser(null);
+    setProfile(null);
+    setIsAdmin(false);
+  };
+
+  // Value objesine login ve signup eklendi
   const value = {
     user,
     profile,
     isAdmin,
     loading,
-    signOut: () => supabase.auth.signOut(),
+    login, 
+    signup,
+    signOut,
+    refreshProfile: () => user && fetchProfile(user)
   };
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
